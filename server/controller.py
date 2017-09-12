@@ -94,19 +94,6 @@ class Controller(util.LoggedClass):
         cmds = ('add_peer daemon_url disconnect getinfo groups log peers reorg '
                 'sessions stop'.split())
         self.rpc_handlers = {cmd: getattr(self, 'rpc_' + cmd) for cmd in cmds}
-        # Set up the ElectrumX request handlers
-        rpcs = [
-            ('blockchain',
-             'address.get_balance address.get_history address.get_mempool '
-             'address.get_proof address.listunspent '
-             'block.get_header estimatefee relayfee '
-             'transaction.get transaction.get_merkle utxo.get_address'),
-            ('server', 'donation_address'),
-        ]
-        self.electrumx_handlers = {'.'.join([prefix, suffix]):
-                                   getattr(self, suffix.replace('.', '_'))
-                                   for prefix, suffixes in rpcs
-                                   for suffix in suffixes.split()}
 
     async def mempool_transactions(self, hashX):
         '''Generate (hex_hash, tx_fee, unconfirmed) tuples for mempool
@@ -217,7 +204,7 @@ class Controller(util.LoggedClass):
     async def main_loop(self):
         '''Controller main loop.'''
         if self.env.rpc_port is not None:
-            await self.start_server('RPC', ('127.0.0.1', '::1'),
+            await self.start_server('RPC', self.env.cs_host(for_rpc=True),
                                     self.env.rpc_port)
         self.ensure_future(self.bp.main_loop())
         self.ensure_future(self.wait_for_bp_catchup())
@@ -305,12 +292,13 @@ class Controller(util.LoggedClass):
         self.state = self.LISTENING
 
         env = self.env
+        host = env.cs_host(for_rpc=False)
         if env.tcp_port is not None:
-            await self.start_server('TCP', env.host, env.tcp_port)
+            await self.start_server('TCP', host, env.tcp_port)
         if env.ssl_port is not None:
             sslc = ssl.SSLContext(ssl.PROTOCOL_TLS)
             sslc.load_cert_chain(env.ssl_certfile, keyfile=env.ssl_keyfile)
-            await self.start_server('SSL', env.host, env.ssl_port, ssl=sslc)
+            await self.start_server('SSL', host, env.ssl_port, ssl=sslc)
 
     async def notify(self):
         '''Notify sessions about height changes and touched addresses.'''
@@ -329,7 +317,8 @@ class Controller(util.LoggedClass):
                 self.header_cache.clear()
 
             # Make a copy; self.sessions can change whilst await-ing
-            sessions = [s for s in self.sessions if isinstance(s, self.coin.SESSIONCLS)]
+            sessions = [s for s in self.sessions
+                        if isinstance(s, self.coin.SESSIONCLS)]
             for session in sessions:
                 await session.notify(self.bp.db_height, touched)
 
@@ -542,13 +531,14 @@ class Controller(util.LoggedClass):
         '''A generator returning lines for a list of sessions.
 
         data is the return value of rpc_sessions().'''
-        fmt = ('{:<6} {:<5} {:>17} {:>5} {:>5} '
+        fmt = ('{:<6} {:<5} {:>17} {:>5} {:>5} {:>5} '
                '{:>7} {:>7} {:>7} {:>7} {:>7} {:>9} {:>21}')
-        yield fmt.format('ID', 'Flags', 'Client', 'Reqs', 'Txs', 'Subs',
+        yield fmt.format('ID', 'Flags', 'Client', 'Proto',
+                         'Reqs', 'Txs', 'Subs',
                          'Recv', 'Recv KB', 'Sent', 'Sent KB', 'Time', 'Peer')
-        for (id_, flags, peer, client, reqs, txs_sent, subs,
+        for (id_, flags, peer, client, proto, reqs, txs_sent, subs,
              recv_count, recv_size, send_count, send_size, time) in data:
-            yield fmt.format(id_, flags, client,
+            yield fmt.format(id_, flags, client, proto,
                              '{:,d}'.format(reqs),
                              '{:,d}'.format(txs_sent),
                              '{:,d}'.format(subs),
@@ -566,6 +556,7 @@ class Controller(util.LoggedClass):
                  session.flags(),
                  session.peername(for_log=for_log),
                  session.client,
+                 session.protocol_version,
                  session.count_pending_items(),
                  session.txs_sent,
                  session.sub_count(),
@@ -672,20 +663,20 @@ class Controller(util.LoggedClass):
             pass
         raise RPCError('{} is not a valid address'.format(address))
 
-    def script_hash_to_hashX(self, script_hash):
+    def scripthash_to_hashX(self, scripthash):
         try:
-            bin_hash = hex_str_to_hash(script_hash)
+            bin_hash = hex_str_to_hash(scripthash)
             if len(bin_hash) == 32:
                 return bin_hash[:self.coin.HASHX_LEN]
         except Exception:
             pass
-        raise RPCError('{} is not a valid script hash'.format(script_hash))
+        raise RPCError('{} is not a valid script hash'.format(scripthash))
 
     def assert_tx_hash(self, value):
         '''Raise an RPCError if the value is not a valid transaction
         hash.'''
         try:
-            if len(bytes.fromhex(value)) == 32:
+            if len(util.hex_to_bytes(value)) == 32:
                 return
         except Exception:
             pass
@@ -801,14 +792,29 @@ class Controller(util.LoggedClass):
         hashX = self.address_to_hashX(address)
         return await self.get_balance(hashX)
 
+    async def scripthash_get_balance(self, scripthash):
+        '''Return the confirmed and unconfirmed balance of a scripthash.'''
+        hashX = self.scripthash_to_hashX(scripthash)
+        return await self.get_balance(hashX)
+
     async def address_get_history(self, address):
         '''Return the confirmed and unconfirmed history of an address.'''
         hashX = self.address_to_hashX(address)
         return await self.confirmed_and_unconfirmed_history(hashX)
 
+    async def scripthash_get_history(self, scripthash):
+        '''Return the confirmed and unconfirmed history of a scripthash.'''
+        hashX = self.scripthash_to_hashX(scripthash)
+        return await self.confirmed_and_unconfirmed_history(hashX)
+
     async def address_get_mempool(self, address):
         '''Return the mempool transactions touching an address.'''
         hashX = self.address_to_hashX(address)
+        return await self.unconfirmed_history(hashX)
+
+    async def scripthash_get_mempool(self, scripthash):
+        '''Return the mempool transactions touching a scripthash.'''
+        hashX = self.scripthash_to_hashX(scripthash)
         return await self.unconfirmed_history(hashX)
 
     async def address_get_proof(self, address):
@@ -819,6 +825,13 @@ class Controller(util.LoggedClass):
     async def address_listunspent(self, address):
         '''Return the list of UTXOs of an address.'''
         hashX = self.address_to_hashX(address)
+        return [{'tx_hash': hash_to_str(utxo.tx_hash), 'tx_pos': utxo.tx_pos,
+                 'height': utxo.height, 'value': utxo.value}
+                for utxo in sorted(await self.get_utxos(hashX))]
+
+    async def scripthash_listunspent(self, scripthash):
+        '''Return the list of UTXOs of a scripthash.'''
+        hashX = self.scripthash_to_hashX(scripthash)
         return [{'tx_hash': hash_to_str(utxo.tx_hash), 'tx_pos': utxo.tx_pos,
                  'height': utxo.height, 'value': utxo.value}
                 for utxo in sorted(await self.get_utxos(hashX))]
@@ -844,16 +857,22 @@ class Controller(util.LoggedClass):
         to the daemon's memory pool.'''
         return await self.daemon_request('relayfee')
 
-    async def transaction_get(self, tx_hash, height=None):
+    async def transaction_get(self, tx_hash):
+        '''Return the serialized raw transaction given its hash
+
+        tx_hash: the transaction hash as a hexadecimal string
+        '''
+        self.assert_tx_hash(tx_hash)
+        return await self.daemon_request('getrawtransaction', tx_hash)
+
+    async def transaction_get_1_0(self, tx_hash, height=None):
         '''Return the serialized raw transaction given its hash
 
         tx_hash: the transaction hash as a hexadecimal string
         height: ignored, do not use
         '''
-        # For some reason Electrum passes a height.  We don't require
-        # it in anticipation it might be dropped in the future.
-        self.assert_tx_hash(tx_hash)
-        return await self.daemon_request('getrawtransaction', tx_hash)
+        # For some reason Electrum protocol 1.0 passes a height.
+        return await self.transaction_get(tx_hash)
 
     async def transaction_get_merkle(self, tx_hash, height):
         '''Return the markle tree to a confirmed transaction given its hash
@@ -880,17 +899,11 @@ class Controller(util.LoggedClass):
         raw_tx = await self.daemon_request('getrawtransaction', tx_hash)
         if not raw_tx:
             return None
-        raw_tx = bytes.fromhex(raw_tx)
+        raw_tx = util.hex_to_bytes(raw_tx)
         tx, tx_hash = self.coin.DESERIALIZER(raw_tx).read_tx()
         if index >= len(tx.outputs):
             return None
         return self.coin.address_from_script(tx.outputs[index].pk_script)
-
-    # Client RPC "server" command handlers
-
-    def donation_address(self):
-        '''Return the donation address as a string, empty if there is none.'''
-        return self.env.donation_address
 
     # Signal, exception handlers.
 

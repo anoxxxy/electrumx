@@ -122,16 +122,63 @@ and associated complications.
 Roadmap
 =======
 
-- Python 3.6, which has several performance improvements relevant to
-  ElectrumX
-- UTXO root logic and implementation
-- incremental history serving / pruning
+- Require Python 3.6, which has several performance improvements
+  relevant to ElectrumX
+- offloading more work to synchronize to the client
+- supporting better client privacy
+- wallet server engine
 - new features such as possibly adding label server functionality
 - potentially move some functionality to C or C++
 
 
 ChangeLog
 =========
+
+Version 1.1
+-----------
+
+See the changelogs below for recent changes.  The most important is
+that for mainnet bitcoin **NET** must now be *mainnet* and you must
+choose a **COIN** from *BitcoinCash* and *BitcoinSegwit*.  Similarly
+for testnets.  These coins will likely diverge further in future so
+it's best they become separate coins now.
+
+- no longer persist peers, rediscover on restart
+- onion peers only reported if can connect; hard-coded exception removed
+- small fix for blockchain.transaction.broadcast
+
+Version 1.1pre2
+---------------
+
+- peerdisc: handle protocol 1.1 server replies
+- issue `#251`_: fix protocol version reported in server.peers.subscribe
+- fix handling of failed transaction broadcast
+- fix typos (SomberNight)
+- doc and test updates
+- dash: return errors in JSON error field for protocol 1.1
+
+Version 1.1pre1
+---------------
+
+Many changes, mostly to prepare for support of Electrum protocol 1.1
+which the next Electrum client release will use.
+
+*NOTE*: the **COIN** environment variable is now mandatory, and if you
+were running for any bitcoin flavour (Cash, Segwit, mainnet or
+testnet) you will need to update your **COIN** and **NET** environment
+variable settings as the old ones will no longer work.
+
+- implement protocol version 1.1 and update protocol documentation
+- rework lib/coins.py for the various bitcoin flavours
+- show protocol version in "sessions" ElectrumX RPC call
+- permit **HOST** envvar to be a comma-separated list
+- daemon abstraction refactoring (erasmospunk)
+- permit alternative event loop policies (based on suggestion / work
+  of JustinTArthur)
+- misc configuration updates (SubPar)
+- add Neblio support (neblioteam) and Bitbay (anoxxxy)
+- HOWTO.rst update for running on privileged port (EagleTM)
+- issues closed: exclude test dirs from installation (`#223`_).
 
 Version 1.0.17
 --------------
@@ -314,6 +361,8 @@ Version 1.0
 .. _#162: https://github.com/kyuupichan/electrumx/issues/162
 .. _#163: https://github.com/kyuupichan/electrumx/issues/163
 .. _#180: https://github.com/kyuupichan/electrumx/issues/180
+.. _#223: https://github.com/kyuupichan/electrumx/issues/223
+.. _#251: https://github.com/kyuupichan/electrumx/issues/251
 .. _docs/HOWTO.rst: https://github.com/kyuupichan/electrumx/blob/master/docs/HOWTO.rst
 .. _docs/ENVIRONMENT.rst: https://github.com/kyuupichan/electrumx/blob/master/docs/ENVIRONMENT.rst
 .. _docs/PEER_DISCOVERY.rst: https://github.com/kyuupichan/electrumx/blob/master/docs/PEER_DISCOVERY.rst
