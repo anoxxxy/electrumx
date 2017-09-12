@@ -663,6 +663,13 @@ class Controller(util.LoggedClass):
             pass
         raise RPCError('{} is not a valid address'.format(address))
 
+    def pay_to_address_script(self, address):
+        try:
+            return self.coin.pay_to_address_script(address)
+        except Exception:
+            pass
+        raise RPCError('{} is not a valid address'.format(address))
+
     def scripthash_to_hashX(self, scripthash):
         try:
             bin_hash = hex_str_to_hash(scripthash)
@@ -822,11 +829,13 @@ class Controller(util.LoggedClass):
         hashX = self.address_to_hashX(address)
         raise RPCError('address.get_proof is not yet implemented')
 
-    async def address_listunspent(self, address):
+        async def address_listunspent(self, address):
         '''Return the list of UTXOs of an address.'''
         hashX = self.address_to_hashX(address)
+        script = self.pay_to_address_script(address)
+        scriptKey = script.hex()
         return [{'tx_hash': hash_to_str(utxo.tx_hash), 'tx_pos': utxo.tx_pos,
-                 'height': utxo.height, 'value': utxo.value}
+                 'height': utxo.height, 'value': utxo.value, 'script': scriptKey}
                 for utxo in sorted(await self.get_utxos(hashX))]
 
     async def scripthash_listunspent(self, scripthash):
